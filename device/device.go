@@ -281,7 +281,14 @@ func (device *Device) SetPrivateKey(sk NoisePrivateKey) error {
 	return nil
 }
 
-func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
+// Each call to NewDevice creates (4*numCPU)+7 goroutines.
+// First call per execution creates 16 goroutines on top of that.
+//
+// numCPU determines how many CPUs are used.
+// Specify a number of 1 - runtime.NumCPU
+// Lower numbers are useful for avoiding over-allocation
+// of resources on hosts with lots of CPU cores.
+func NewDeviceNumCPU(tunDevice tun.Device, bind conn.Bind, logger *Logger, numCPU int) *Device {
 	device := new(Device)
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
@@ -309,6 +316,9 @@ func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
 	// start workers
 
 	cpus := runtime.NumCPU()
+	if numCPU < cpus {
+		cpus = numCPU
+	}
 	device.state.stopping.Wait()
 	device.queue.encryption.wg.Add(cpus) // One for each RoutineHandshake
 	for i := 0; i < cpus; i++ {
@@ -323,6 +333,10 @@ func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
 	go device.RoutineTUNEventReader()
 
 	return device
+}
+
+func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
+	return NewDeviceNumCPU(tunDevice, bind, logger, runtime.NumCPU())
 }
 
 // BatchSize returns the BatchSize for the device as a whole which is the max of
